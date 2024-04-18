@@ -1,0 +1,167 @@
+
+# Atmospheric Conductance 
+How easily water diffuses into the air and depends largely on windspeed (more evaporation in windier conditions). 
+- also influences by the vegetation itself adn the turbulance it creates 
+
+zm is the height at which windspeed is measured - must be
+higher than the vegetation (cm), it is usually measured 200
+cm above the vegetation
+
+h is vegetation height (cm)
+
+v is windspeed (cm/s)
+
+kd 0.7
+
+ko = 0.1
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(sensitivity)
+library(tidyverse)
+library(lhs)
+library(purrr)
+```
+
+
+For a given forest, perform a sensitivity analysis of model
+predictions of conductance. Consider the sensitivity of your
+estimate to uncertainty in the following parameters and
+inputs
+
+h is vegetation height (cm)
+- 9.5-10.5m
+
+v is windspeed (cm/s)
+- qnorm
+- mean 250cm/s
+- sd 30cm/s
+
+kd 0.7
+- qnorm
+- sd 0.01*0.7
+
+ko = 0.1
+- qnorm
+- sd 0.01*0.1
+
+```{r}
+# load in the atmospheric conductance function
+source("../R/Catm.R")
+
+set.seed(47)
+
+pnames = c("height", "v", "k_d", "k_o")
+
+# set the number of parameters and samples
+npar =  length(pnames)
+# how many samples
+nsample = 100
+
+# select the number of rows (nsample) and number of columns (npar)
+parm_quant = randomLHS(nsample, npar)
+# set the column names for parm_quant as the ones defined above
+colnames(parm_quant) = pnames
+
+# create empty dataframe for the parameters
+parm = as.data.frame(matrix(nrow=nrow(parm_quant), 
+                            ncol=ncol(parm_quant)))
+colnames(parm) = pnames
+
+# use the known means and sd to generate values for the samples
+pvar = 100
+
+parm[,"height"] = qnorm(parm_quant[,"height"], runif(1, min = 9.5, max = 10.5))
+parm[,"v"] = qnorm(parm_quant[,"v"], mean = 250, sd = 30)
+
+# for uniform I'm using +- 1%
+parm[,"k_d"] = qunif(parm_quant[,"k_d"], min=0.7-0.7/pvar, max=0.7+0.7/pvar)
+parm[,"k_o"] = qunif(parm_quant[,"k_o"], min=0.1-0.1/pvar, max=0.1+0.1/pvar)
+
+# the names match the model
+head(parm)
+```
+The function:
+
+```{r}
+Catm = function(v, height, zm_add=2, k_o=0.1, k_d=0.7) {
+
+
+    zd = k_d*height
+    zo = k_o*height
+
+    zm = height+zm_add
+
+    zd = ifelse(zd < 0, 0, zd)
+    Ca = ifelse(zo > 0,
+     v / (6.25*log((zm-zd)/zo)**2),
+     0)
+
+# convert to mm
+    Ca = Ca*1000
+   return(Ca)
+}
+```
+
+Latin hypercube approach:
+```{r}
+#yields = parm %>% pmap(compute_almond_yield,clim=clim)
+
+# map the function to the parameters
+ac <- parm %>% 
+  pmap(Catm, zm_add=2)
+
+ac_sd <- as.data.frame(do.call("rbind", ac))
+
+#acsd = ac %>% map_dfr(`[`,c("maxca","minca","meanca"))
+
+# plotting
+
+# acsd_plot <- acsd %>% 
+#   gather(value="value", key="ca")
+
+# uncertainty on estimates
+ggplot(ac_sd, aes(V1)) +
+  geom_histogram() +
+  labs(x="Atmospheric Conductance")
+
+
+tmp = cbind.data.frame(ac_sd, parm) %>% 
+  rename(Ca = V1)
+
+tmp2 = tmp %>% 
+  gather(2:5, key="parm", value="parmvalue")
+
+ggplot(tmp2, aes(parmvalue, Ca, col=parm)) + 
+  geom_point() + 
+  facet_wrap(~parm, scales="free", 
+             ncol=5)
+
+```
+
+Quantifying
+
+Height and windspeed both are strongly correlated!
+
+```{r}
+
+
+# simple correlation coefficients
+result = map(parm, cor.test, y=ac_sd$V1)
+result$height
+result$v
+result$k_o
+result$k_d
+
+# just the confidence interval
+justconf = result %>% map_df("conf.int")
+justconf
+
+# partial regression rank coefficients
+
+senresult_rank = pcc(parm, ac_sd$V1, rank=TRUE )
+senresult_rank
+plot(senresult_rank)
+```
+
