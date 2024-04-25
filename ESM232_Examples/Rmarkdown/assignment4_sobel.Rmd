@@ -1,0 +1,136 @@
+---
+author: "Luna Herschenfeld-Catalán"
+title: "Assignment 4: Sobol Sensitivity"
+output: html_document
+date: '2024-04-24'
+---
+# Assignment Part I
+
+Describing how results of the sensitivity analysis reported on in the paper might contribute to understanding (or prediction) within an environmental problem solving or management context.
+
+**The uranium groundwater study sought to evaluate the non-carcinogenic risk of uranium on children and adults. The parameters were concentration of pollutant in drinking water, body weight, exposure duration, average time, surface area, fraction of contact surface, exposure duration during shower, and exposure frequency. Sobel sensitivity analysis was used to vary all the model inputs at the same time. This is important because it can determine the main effects, and determine how sensitive the output is to each parameter. This is critical because to determine the regulations its important to know which of the exposure risks are most important to focus on when developing recommendations and risk aversion plans. Additionally, since some of the parameters are about the physical aspects, and which ones are about environment, if there are any patterns regarding risk it can help focus management on the back or front end of contamination problems.**
+
+# Assignment Part 2
+
+Repeat the sensitivity analysis that we have been working on in class BUT lets assume that we are in a different locations - where windpeeds are substantially higher and more variable AND vegetation is shorter - See details below:
+
+Consider the sensitivity of your estimate to uncertainty in the following parameters and inputs:
+- height (between 3.5 and 5.5 m (but any value in that range is equally likely))
+- kd (normally distributed with standard deviation of 1% of their default values)
+- k0 (normally distributed with standard deviation of 1% of their default values)
+- v (windspeeds are normally distributed with a mean of 300 cm/s with a standard deviation of 50 cm/s)
+
+Use the Sobel approach to generate parameter values for the 4 parameters:
+
+a. Run the atmospheric conductance model for these parameters
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sensitivity)
+library(tidyverse)
+library(gridExtra)
+library(purrr)
+library(ggpubr)
+```
+
+
+```{r}
+source("../R/Catm.R")
+
+# generate two examples of random number from parameter distributions
+np=1000
+k_o = rnorm(mean=0.1,sd=0.1*0.1, n=np)
+k_d = rnorm(mean=0.7, sd=0.7*0.1, n=np)
+v = rnorm(mean=300, sd=50, n=np)
+height = runif(min=3.5, max=5.5, n=np)
+
+X1 = cbind.data.frame(k_o, k_d, v, height=height)
+
+# repeat sampling
+k_o = rnorm(mean=0.1,sd=0.1*0.1, n=np)
+k_d = rnorm(mean=0.7, sd=0.7*0.1, n=np)
+v = rnorm(mean=300, sd=50, n=np)
+height = runif(min=3.5, max=3.5, n=np)
+
+X2 = cbind.data.frame(k_o, k_d, v, height=height)
+
+# create sobol object`
+sens_Catm_Sobol = sobolSalt(model = NULL, 
+                            X1, 
+                            X2, 
+                            nboot = 100)
+
+
+# Take a look at the Sobol generated sensitivity object
+#str(sens_Catm_Sobol, 5)
+
+#nrow(sens_Catm_Sobol$X)
+# your parameters sets for sensitivity analysis are in X
+```
+
+## Sobel Indices
+```{r}
+# run model for all parameter sets
+# make sure you give the parameters names
+parms = as.data.frame(sens_Catm_Sobol$X)
+colnames(parms)= colnames(X1)
+res = pmap_dbl(parms, Catm)
+
+# model run for all params
+sens_Catm_Sobol = sensitivity::tell(sens_Catm_Sobol, # model
+                                    res, # all parms
+                                    res.names="ga")
+# useful to add names
+row.names(sens_Catm_Sobol$S) = colnames(parms)
+
+# main effect:  partitions variance (main effect without co-variance) - sums approximately to one
+sens_Catm_Sobol$S
+
+# total effect - accounts for parameter interactions
+row.names(sens_Catm_Sobol$T) = colnames(parms)
+sens_Catm_Sobol$T
+
+# Both the main effect and total effect can tell us something about how the parameter influences results
+print(sens_Catm_Sobol)
+```
+
+
+## Plotting
+Conductance estimates in a way that accounts for parameter uncertainty
+```{r}
+
+# graph two most sensitive parameters
+both = cbind.data.frame(parms, 
+                        gs=sens_Catm_Sobol$y)
+
+# look at overall gs sensitvity to uncertainty
+ggplot(both, aes(x=gs)) + 
+  geom_histogram() + 
+  geom_vline(xintercept = mean(both$gs),  # make a mean line
+             col="orange") +
+  labs(x = "Conductance (mm/s)") +
+  theme_minimal()
+
+# look at response of conductance to the two interesting variables
+ggplot(both, aes(v,gs, col=height)) + 
+  geom_point() + 
+  scale_color_viridis_c(option = "B",
+                        direction = 1) +
+  labs(y="Conductance (mm/s)", x="Windspeed") +
+  theme_minimal()
+
+# use second most sensitive parameter (using most important as color)
+ggplot(both, aes(height,gs, col=v)) + 
+  geom_point() + 
+  scale_color_viridis_c(option = "B",
+                        direction = 1) +
+  labs(y="Conductance (mm/s)", x="Height (m)") +
+  theme_minimal()
+
+```
+
+f. Comment on what this tells you about how atmospheric conductance and its sensitivity to variation in wind-speed differs in this setting as compared to the setting that we examined in class where wind-speed was lower and less variable and vegetation was taller.
+
+**When the wind speed was lower and the vegetation was taller theatmospheric conductance was most impacted to k_d (0.52) and k_o (0.27). In comparison, in this example when the wind speeds were higher and the vegetation was shorter the atmospheric conductance was most sensitive to wind-speed (total indices v = 0.67) and height (total indices height = 0.31). This suggests that in different environemnts, conductance will be sensitive to different parameters and no context should be deemed the best fit without invesitgating these variables critically.**
+
+
